@@ -29,6 +29,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 
 # API Keys (Railway environment variables'dan okunur)
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "").strip()
+logging.info(f"🔑 API Key loaded: '{BYBIT_API_KEY[:8]}...' (len={len(BYBIT_API_KEY)})")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "").strip()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
