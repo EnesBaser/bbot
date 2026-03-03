@@ -118,6 +118,10 @@ bot_state = {
 }
 
 app = Flask(__name__)
+
+# Bot loop thread - Gunicorn için burada başlat
+bot_thread = threading.Thread(target=bot_loop, daemon=True)
+bot_thread.start()
 session_cache = None
 
 # =============================================================================
@@ -1298,8 +1302,13 @@ HTML = """
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     logging.info(f"🚀 Bot starting on port {port}")
+    
+    # Bot loop'u background thread olarak başlat
+    bot_thread = threading.Thread(target=bot_loop, daemon=True)
+    bot_thread.start()
+    logging.info("🤖 Bot thread started")
+    
     app.run(host="0.0.0.0", port=port, debug=False)
-
 # =============================================================================
 # LOGIN HTML
 # =============================================================================
