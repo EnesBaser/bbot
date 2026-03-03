@@ -119,9 +119,7 @@ bot_state = {
 
 app = Flask(__name__)
 
-# Bot loop thread - Gunicorn için burada başlat
-bot_thread = threading.Thread(target=bot_loop, daemon=True)
-bot_thread.start()
+
 session_cache = None
 
 # =============================================================================
