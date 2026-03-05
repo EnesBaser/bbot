@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Bybit Trading Bot v4.010 - Triple Auto Mode
-- FIX: gunicorn uyumlu thread başlatma (app module load'da)
-- FIX: Daha hızlı tarama (batch tickers)
-- FIX: İlk başlatmada modlar açık değil ama UI düzgün sync
+Bybit Trading Bot v4.011 - Triple Auto Mode
+- FIX: Kaldıraç kaldırıldı (İslami kurallara uygun, 1x spot benzeri)
+- FIX: Pozisyon büyüklükleri artırıldı
+- YENİ: Son 20 kapanan işlem accordion UI
 """
 
 import os
@@ -34,7 +34,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 MODES = {
     "SAFE": {
-        "position_size": 15,
+        "position_size": 25,
         "max_positions": 1,
         "volume_min": 10_000_000,
         "volatility_min": 2.5,
@@ -47,8 +47,7 @@ MODES = {
         "enabled": False,
     },
     "MODERATE": {
-        "position_size": 25,
-        "max_positions": 2,
+        "position_size": 40,
         "volume_min": 5_000_000,
         "volatility_min": 2.0,
         "rsi_oversold": 30,
@@ -60,8 +59,7 @@ MODES = {
         "enabled": False,
     },
     "AGGRESSIVE": {
-        "position_size": 35,
-        "max_positions": 3,
+        "position_size": 55,
         "volume_min": 2_000_000,
         "volatility_min": 1.5,
         "rsi_oversold": 35,
@@ -108,6 +106,7 @@ bot_state = {
     "daily_loss_hit": False,
     "start_balance": 0.0,
     "last_reset_date": datetime.now().strftime("%Y-%m-%d"),
+    "trade_history": [],  # Son 20 kapanan işlem
 }
 
 app = Flask(__name__)
@@ -476,8 +475,7 @@ def open_position(symbol, signal, mode_name):
         if qty == 0:
             logging.error(f"❌ {symbol}: Qty = 0")
             return False
-        session.set_leverage(category="linear", symbol=symbol,
-                             buyLeverage="10", sellLeverage="10")
+        # Kaldıraç YOK (1x - İslami kurallara uygun)
         side = "Buy" if signal == "BUY" else "Sell"
         order = session.place_order(
             category="linear", symbol=symbol, side=side,
@@ -547,6 +545,21 @@ def close_position(symbol, reason=""):
                 logging.warning(f"🚨 GÜNLÜK KAYIP LİMİTİ! {daily_pnl_pct:.2f}%")
         if pnl_usd < 0:
             track_loss(symbol, pnl_usd)
+
+        # Kapanan işlemi geçmişe ekle (son 20)
+        bot_state["trade_history"].insert(0, {
+            "symbol": symbol,
+            "mode": pos["mode"],
+            "signal": pos["signal"],
+            "entry": pos["entry_price"],
+            "exit": exit_price,
+            "pnl_pct": round(pnl_pct, 2),
+            "pnl_usd": round(pnl_usd, 2),
+            "reason": reason,
+            "time": datetime.now().strftime("%d.%m %H:%M"),
+        })
+        bot_state["trade_history"] = bot_state["trade_history"][:20]
+
         del bot_state["positions"][symbol]
         emoji = "🟢" if pnl_usd > 0 else "🔴"
         logging.info(f"{emoji} {pos['mode']} | {symbol} closed: {pnl_pct:+.2f}% (${pnl_usd:+.2f}) - {reason}")
@@ -697,7 +710,8 @@ def api_status():
         "blacklist_count": len(bot_state["blacklist"]),
         "daily_pnl": round(bot_state["daily_pnl"], 2),
         "daily_loss_hit": bot_state["daily_loss_hit"],
-        "daily_loss_limit": bot_state["daily_loss_limit"]
+        "daily_loss_limit": bot_state["daily_loss_limit"],
+        "trade_history": bot_state["trade_history"],
     })
 
 @app.route('/api/start_bot', methods=['POST'])
@@ -856,13 +870,74 @@ HTML = """
             font-size: 0.85em;
             color: #93c5fd;
         }
+
+        /* Accordion - Kapanan İşlemler */
+        .accordion {
+            margin-top: 15px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(59,130,246,0.3);
+        }
+        .accordion-header {
+            background: linear-gradient(135deg, rgba(30,58,138,0.8) 0%, rgba(59,130,246,0.5) 100%);
+            padding: 14px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+            transition: background 0.2s;
+        }
+        .accordion-header:hover {
+            background: linear-gradient(135deg, rgba(30,58,138,1) 0%, rgba(59,130,246,0.7) 100%);
+        }
+        .accordion-header h2 { font-size: 1em; margin: 0; }
+        .accordion-arrow {
+            font-size: 1em;
+            transition: transform 0.3s;
+            display: inline-block;
+        }
+        .accordion-arrow.open { transform: rotate(180deg); }
+        .accordion-body {
+            display: none;
+            background: linear-gradient(135deg, rgba(30,58,138,0.4) 0%, rgba(59,130,246,0.2) 100%);
+            padding: 15px;
+        }
+        .accordion-body.open { display: block; }
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            overflow: hidden;
+            font-size: 0.9em;
+        }
+        .history-table th {
+            background: rgba(59,130,246,0.3);
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: bold;
+        }
+        .history-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(59,130,246,0.15);
+        }
+        .history-table tr:last-child td { border-bottom: none; }
+        .history-table tr:hover { background: rgba(59,130,246,0.15); }
+        .reason-tag {
+            font-size: 0.78em;
+            padding: 2px 7px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+            color: #cbd5e1;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
         <h1>🤖 Bybit Trading Bot</h1>
-        <div class="version">v4.010 - Triple Auto Mode (Batch Scanner)</div>
+        <div class="version">v4.011 - Triple Auto Mode (No Leverage)</div>
         <div class="control-buttons">
             <button class="btn-control btn-start" id="btn-start-bot" onclick="startBot()">🚀 START BOT</button>
             <button class="btn-control btn-stop" id="btn-stop-bot" onclick="stopBot()">⏹️ STOP BOT</button>
@@ -909,21 +984,21 @@ HTML = """
     <div class="modes">
         <div class="mode-card" id="mode-safe">
             <div class="mode-title">🛡️ SAFE</div>
-            <div class="mode-info">Size: $15 | Max: 1 pos</div>
+            <div class="mode-info">Size: $25 | Max: 1 pos</div>
             <div class="mode-info">Vol: 10M+ | Vola: 2.5%+</div>
             <div class="mode-info">TP: 8% | SL: -2%</div>
             <button class="mode-toggle off" onclick="toggleMode('SAFE')">OFF</button>
         </div>
         <div class="mode-card" id="mode-moderate">
             <div class="mode-title">⚖️ MODERATE</div>
-            <div class="mode-info">Size: $25 | Max: 2 pos</div>
+            <div class="mode-info">Size: $40 | Max: 2 pos</div>
             <div class="mode-info">Vol: 5M+ | Vola: 2%+</div>
             <div class="mode-info">TP: 6% | SL: -2.5%</div>
             <button class="mode-toggle off" onclick="toggleMode('MODERATE')">OFF</button>
         </div>
         <div class="mode-card" id="mode-aggressive">
             <div class="mode-title">🔥 AGGRESSIVE</div>
-            <div class="mode-info">Size: $35 | Max: 3 pos</div>
+            <div class="mode-info">Size: $55 | Max: 3 pos</div>
             <div class="mode-info">Vol: 2M+ | Vola: 1.5%+</div>
             <div class="mode-info">TP: 5% | SL: -3%</div>
             <button class="mode-toggle off" onclick="toggleMode('AGGRESSIVE')">OFF</button>
@@ -944,6 +1019,33 @@ HTML = """
                 <tr><td colspan="8" class="empty">No active positions</td></tr>
             </tbody>
         </table>
+    </div>
+
+    <!-- Kapanan İşlemler Accordion -->
+    <div class="accordion">
+        <div class="accordion-header" onclick="toggleAccordion()">
+            <h2>📋 Son Kapanan İşlemler <span id="history-count" style="color:#fbbf24;font-size:0.9em;margin-left:8px;"></span></h2>
+            <span class="accordion-arrow" id="accordion-arrow">▼</span>
+        </div>
+        <div class="accordion-body" id="accordion-body">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Mode</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Giriş</th>
+                        <th>Çıkış</th>
+                        <th>P&L</th>
+                        <th>Neden</th>
+                    </tr>
+                </thead>
+                <tbody id="history-body">
+                    <tr><td colspan="8" class="empty">Henüz kapanan işlem yok</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
@@ -1028,10 +1130,52 @@ function update() {
                     </tr>
                 `).join('');
             }
+            // Trade history
+            updateHistory(data.trade_history);
         })
         .catch(() => {
             document.getElementById('scan-status').textContent = '🔴 Connection lost...';
         });
+}
+
+function toggleAccordion() {
+    let body = document.getElementById('accordion-body');
+    let arrow = document.getElementById('accordion-arrow');
+    body.classList.toggle('open');
+    arrow.classList.toggle('open');
+}
+
+function updateHistory(history) {
+    let countEl = document.getElementById('history-count');
+    let tbody = document.getElementById('history-body');
+
+    if (!history || history.length === 0) {
+        countEl.textContent = '';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">Henüz kapanan işlem yok</td></tr>';
+        return;
+    }
+
+    countEl.textContent = '(' + history.length + ')';
+
+    tbody.innerHTML = history.map(t => {
+        let pnlClass = t.pnl_usd >= 0 ? 'pnl-positive' : 'pnl-negative';
+        let pnlSign = t.pnl_usd >= 0 ? '+' : '';
+        return `
+            <tr>
+                <td style="white-space:nowrap;color:#94a3b8;">${t.time}</td>
+                <td><span class="badge badge-${t.mode.toLowerCase()}">${t.mode}</span></td>
+                <td><strong>${t.symbol}</strong></td>
+                <td>${t.signal}</td>
+                <td>$${t.entry.toFixed(4)}</td>
+                <td>$${t.exit.toFixed(4)}</td>
+                <td class="${pnlClass}">
+                    ${pnlSign}${t.pnl_usd.toFixed(2)} USDT<br>
+                    <small>(${pnlSign}${t.pnl_pct.toFixed(2)}%)</small>
+                </td>
+                <td><span class="reason-tag">${t.reason}</span></td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function toggleMode(mode) {
