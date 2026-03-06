@@ -458,9 +458,23 @@ def get_step_size(symbol):
     return 0.01, 0.01
 
 def normalize_qty(amount_usd, price, step, min_qty):
-    qty = amount_usd / price
-    qty = round(qty / step) * step
-    return max(qty, min_qty)
+    """
+    Doğru qty hesaplama:
+    - Decimal kullanarak floating point hatasını önle
+    - step'in ondalık basamak sayısını bul, ona göre round et
+    """
+    from decimal import Decimal, ROUND_DOWN
+    
+    d_amount = Decimal(str(amount_usd))
+    d_price  = Decimal(str(price))
+    d_step   = Decimal(str(step))
+    d_min    = Decimal(str(min_qty))
+    
+    raw_qty = d_amount / d_price                    # Kaç adet alabiliriz?
+    qty     = (raw_qty // d_step) * d_step          # Aşağı yuvarla (ROUND_DOWN)
+    qty     = max(qty, d_min)                        # Minimum qty garantisi
+    
+    return float(qty)
 
 def open_position(symbol, signal, mode_name):
     try:
@@ -472,9 +486,20 @@ def open_position(symbol, signal, mode_name):
         price = float(df["close"].iloc[-1])
         step, min_qty = get_step_size(symbol)
         qty = normalize_qty(mode["position_size"], price, step, min_qty)
+
+        # Gerçek USD değeri kontrolü — çok küçükse açma
+        actual_usd = qty * price
+        expected_usd = mode["position_size"]
+        if actual_usd < expected_usd * 0.5:
+            logging.error(f"❌ {symbol}: Qty çok küçük! {qty} adet = ${actual_usd:.2f} (beklenen ~${expected_usd})")
+            return False
+
         if qty == 0:
             logging.error(f"❌ {symbol}: Qty = 0")
             return False
+
+        logging.info(f"📐 {symbol}: price=${price} step={step} min_qty={min_qty} → qty={qty} (${actual_usd:.2f} USD)")
+
         # Kaldıraç YOK (1x - İslami kurallara uygun)
         side = "Buy" if signal == "BUY" else "Sell"
         order = session.place_order(
@@ -492,8 +517,8 @@ def open_position(symbol, signal, mode_name):
             "current_sl": mode["sl_percent"], "open_time": datetime.now(),
             "trailing_active": False
         }
-        logging.info(f"✅ {mode_name} | {symbol} {signal} @ ${price:.4f} | Qty: {qty}")
-        send_telegram(f"🟢 <b>{mode_name}</b>\n{symbol} {signal}\n💰 ${price:.4f}\n📊 Qty: {qty}")
+        logging.info(f"✅ {mode_name} | {symbol} {signal} @ ${price:.6f} | Qty: {qty} | ~${actual_usd:.2f}")
+        send_telegram(f"🟢 <b>{mode_name}</b>\n{symbol} {signal}\n💰 ${price:.6f}\n📊 Qty: {qty} (~${actual_usd:.2f})")
         return True
     except Exception as e:
         logging.error(f"❌ Open error {symbol}: {e}")
